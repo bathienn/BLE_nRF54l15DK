@@ -1,0 +1,1 @@
+ble advertising for nRF54l15DK
