@@ -1,11 +1,11 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
-
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/conn.h>
 #include <zephyr/bluetooth/gatt.h>
 #include <zephyr/bluetooth/uuid.h>
 #include <zephyr/bluetooth/services/bas.h>
+#include <stdlib.h>
 
 LOG_MODULE_REGISTER(ble_advertise, LOG_LEVEL_INF);
 
@@ -52,13 +52,49 @@ static ssize_t on_read(struct bt_conn *conn, const struct bt_gatt_attr *attr,
     return bt_gatt_attr_read(conn, attr, buf, len, offset, read_value, read_len);
 }
 
+static struct bt_gatt_attr *tx_attr;
+
+void send_notify_data(struct bt_conn *conn)
+{
+    uint8_t msg[16];
+    int err;
+    err = bt_gatt_notify(conn, tx_attr, msg, sizeof(msg));
+    if (err) {
+        LOG_ERR("Notify msg failed (err %d)", err);
+    } else {
+        LOG_INF("Notify msg ok");
+    }
+    for (int time = 0; time < 20; time++){
+        for (int i=0 ; i < 16; i++){
+            msg[i] = rand() % 256;
+        }
+        err = bt_gatt_notify(conn, tx_attr, msg, sizeof(msg));
+        if (err) {
+            LOG_ERR("Notify msg failed (err %d)", err);
+            return;
+        } else {
+            LOG_INF("Notify %d ok", time);
+        }
+        k_msleep(500);
+    }
+}
+
+static struct bt_conn *default_conn;
+static void tx_ccc_cfg_changed(const struct bt_gatt_attr *attr, uint16_t value)
+{
+    if (value == BT_GATT_CCC_NOTIFY) {
+        LOG_INF("Notify enabled");
+        send_notify_data(default_conn);
+    }
+}
 
 BT_GATT_SERVICE_DEFINE(my_service,
     BT_GATT_PRIMARY_SERVICE(BT_UUID_DECLARE_16(0x1234)),  // Battery service, có thể thay đổi tùy ý
     BT_GATT_CHARACTERISTIC(BT_UUID_DECLARE_16(0x9876),   // UUID của characteristic
-                           BT_GATT_CHRC_WRITE | BT_GATT_CHRC_READ,            // Cho phép ghi vào
-                           BT_GATT_PERM_WRITE | BT_GATT_PERM_READ,           // Quyền ghi
-                           on_read, on_write, NULL),        // Callback khi nhận dữ liệu
+    BT_GATT_CHRC_WRITE | BT_GATT_CHRC_NOTIFY,            // Cho phép ghi vào
+    BT_GATT_PERM_WRITE,           // Quyền ghi
+    on_read, on_write, NULL),        // Callback khi nhận dữ liệu
+    BT_GATT_CCC(tx_ccc_cfg_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
 ); 
 
 void bt_ready(int err)
@@ -82,7 +118,7 @@ int init_ble(void)
     return 0;
 }
 
-static struct bt_conn *default_conn;
+// static struct bt_conn *default_conn;
 static void connected(struct bt_conn *conn, uint8_t err)
 {
     if (err) {
@@ -121,6 +157,8 @@ int main(void)
     LOG_INF("BLE ready");
 
     bt_conn_cb_register(&conn_callbacks);
+
+    tx_attr = &my_service.attrs[2];
 
     int err = bt_le_adv_start(BT_LE_ADV_CONN_NAME, ad, ARRAY_SIZE(ad), NULL, 0);
     if (err){
